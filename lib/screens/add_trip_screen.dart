@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../models/trip.dart';
@@ -28,6 +27,8 @@ class _AddTripScreenState extends State<AddTripScreen> {
   double? _distanceInKm;
   static const double _ratePerKm = 50.0; // ₱50 per kilometer
 
+  static const _apiKey = 'AIzaSyChOuKpfWNxzqlmDJH6R31DiTQTpCU2ZfE';
+
   @override
   void dispose() {
     _startController.dispose();
@@ -36,38 +37,184 @@ class _AddTripScreenState extends State<AddTripScreen> {
     super.dispose();
   }
 
-  Future<void> _searchLocation(String query, bool isStart) async {
-    if (query.isEmpty) return;
+  Future<void> _showLocationSearch(bool isStart) async {
+    List<dynamic> predictions = [];
+    bool isSearching = false;
+    
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => Dialog(
+          child: Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+              maxWidth: MediaQuery.of(context).size.width * 0.9,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    isStart ? 'Search Start Location' : 'Search Destination',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: 'Enter location',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: isSearching 
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    onChanged: (value) async {
+                      if (value.length > 2) {
+                        setState(() {
+                          isSearching = true;
+                        });
 
-    setState(() => _isLoading = true);
+                        try {
+                          final response = await http.get(
+                            Uri.parse(
+                              'https://maps.googleapis.com/maps/api/place/autocomplete/json'
+                              '?input=${Uri.encodeComponent(value)}'
+                              '&components=country:ph'
+                              '&types=geocode'  // Add this to get more precise locations
+                              '&key=$_apiKey'
+                            ),
+                          );
 
-    try {
-      final locations = await locationFromAddress(query);
-      if (locations.isNotEmpty) {
-        final location = locations.first;
-        final latLng = LatLng(location.latitude, location.longitude);
+                          if (response.statusCode == 200) {
+                            final data = json.decode(response.body);
+                            if (data['status'] == 'OK') {
+                              setState(() {
+                                predictions = data['predictions'];
+                                isSearching = false;
+                              });
+                            } else {
+                              throw Exception(data['error_message'] ?? 'Failed to get predictions');
+                            }
+                          } else {
+                            throw Exception('Failed to fetch predictions');
+                          }
+                        } catch (e) {
+                          setState(() {
+                            isSearching = false;
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Error: $e')),
+                          );
+                        }
+                      } else {
+                        setState(() {
+                          predictions = [];
+                          isSearching = false;
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Flexible(
+                    child: predictions.isEmpty
+                        ? Center(
+                            child: Text(
+                              isSearching 
+                                  ? 'Searching...'
+                                  : predictions.isEmpty 
+                                      ? 'Enter at least 3 characters to search'
+                                      : 'No results found',
+                              style: Theme.of(context).textTheme.bodyLarge,
+                            ),
+                          )
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: predictions.length,
+                            itemBuilder: (context, index) {
+                              final prediction = predictions[index];
+                              return ListTile(
+                                leading: const Icon(Icons.location_on),
+                                title: Text(
+                                  prediction['structured_formatting']['main_text'] ?? '',
+                                ),
+                                subtitle: Text(
+                                  prediction['structured_formatting']['secondary_text'] ?? '',
+                                ),
+                                onTap: () async {
+                                  setState(() => isSearching = true);
+                                  try {
+                                    // Get place details
+                                    final details = await http.get(
+                                      Uri.parse(
+                                        'https://maps.googleapis.com/maps/api/place/details/json'
+                                        '?place_id=${prediction['place_id']}'
+                                        '&fields=geometry,formatted_address'
+                                        '&key=$_apiKey'
+                                      ),
+                                    );
 
-        if (isStart) {
-          _startLocation = latLng;
-          _updateMarker('start', latLng, query);
-        } else {
-          _endLocation = latLng;
-          _updateMarker('end', latLng, query);
-        }
+                                    if (details.statusCode == 200) {
+                                      final data = json.decode(details.body);
+                                      if (data['status'] == 'OK') {
+                                        final location = data['result']['geometry']['location'];
+                                        final latLng = LatLng(location['lat'], location['lng']);
+                                        final address = data['result']['formatted_address'];
 
-        if (_startLocation != null && _endLocation != null) {
-          await _getRoute();
-        }
+                                        if (isStart) {
+                                          _startController.text = address;
+                                          _startLocation = latLng;
+                                          _updateMarker('start', latLng, address);
+                                        } else {
+                                          _endController.text = address;
+                                          _endLocation = latLng;
+                                          _updateMarker('end', latLng, address);
+                                        }
 
-        _updateMapView();
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error finding location: $e')),
-      );
-    } finally {
-      setState(() => _isLoading = false);
-    }
+                                        if (_startLocation != null && _endLocation != null) {
+                                          await _getRoute();
+                                        }
+
+                                        _updateMapView();
+                                        Navigator.pop(context);
+                                      }
+                                    }
+                                  } catch (e) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Error: $e')),
+                                    );
+                                  } finally {
+                                    setState(() => isSearching = false);
+                                  }
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _updateMarker(String id, LatLng position, String title) {
@@ -84,12 +231,16 @@ class _AddTripScreenState extends State<AddTripScreen> {
   Future<void> _getRoute() async {
     if (_startLocation == null || _endLocation == null) return;
 
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
       final String url = 'https://maps.googleapis.com/maps/api/directions/json?'
           'origin=${_startLocation!.latitude},${_startLocation!.longitude}'
           '&destination=${_endLocation!.latitude},${_endLocation!.longitude}'
           '&mode=driving'
-          '&key=AIzaSyCZt4iWsmr1Gjs5FflS-u6MQ9r_t_sG12I';
+          '&key=$_apiKey';
 
       final response = await http.get(Uri.parse(url));
       
@@ -115,12 +266,23 @@ class _AddTripScreenState extends State<AddTripScreen> {
               ),
             );
           });
+        } else {
+          throw Exception(data['error_message'] ?? 'Failed to get route');
         }
+      } else {
+        throw Exception('Failed to fetch route: ${response.statusCode}');
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error getting route: $e')),
+        SnackBar(
+          content: Text('Error getting route: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
@@ -240,22 +402,54 @@ class _AddTripScreenState extends State<AddTripScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    // Start location field
                     TextField(
                       controller: _startController,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Start Location',
-                        prefixIcon: Icon(Icons.location_on),
+                        prefixIcon: const Icon(Icons.location_on),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _startController.clear();
+                            setState(() {
+                              _startLocation = null;
+                              _markers.removeWhere(
+                                (m) => m.markerId.value == 'start'
+                              );
+                              _polylines.clear();
+                              _distanceInKm = null;
+                            });
+                          },
+                        ),
                       ),
-                      onSubmitted: (value) => _searchLocation(value, true),
+                      readOnly: true,
+                      onTap: () => _showLocationSearch(true),
                     ),
                     const SizedBox(height: 8),
+                    // Destination field
                     TextField(
                       controller: _endController,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Destination',
-                        prefixIcon: Icon(Icons.location_on),
+                        prefixIcon: const Icon(Icons.location_on),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _endController.clear();
+                            setState(() {
+                              _endLocation = null;
+                              _markers.removeWhere(
+                                (m) => m.markerId.value == 'end'
+                              );
+                              _polylines.clear();
+                              _distanceInKm = null;
+                            });
+                          },
+                        ),
                       ),
-                      onSubmitted: (value) => _searchLocation(value, false),
+                      readOnly: true,
+                      onTap: () => _showLocationSearch(false),
                     ),
                   ],
                 ),

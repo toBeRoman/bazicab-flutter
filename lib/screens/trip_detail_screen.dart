@@ -47,7 +47,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
           'origin=${widget.trip.startLat},${widget.trip.startLng}'
           '&destination=${widget.trip.endLat},${widget.trip.endLng}'
           '&mode=driving'
-          '&key=AIzaSyCZt4iWsmr1Gjs5FflS-u6MQ9r_t_sG12I';
+          '&key=AIzaSyChOuKpfWNxzqlmDJH6R31DiTQTpCU2ZfE';
 
       final response = await http.get(Uri.parse(url));
       

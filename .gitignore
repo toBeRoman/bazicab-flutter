@@ -115,3 +115,7 @@ GoogleService-Info.plist
 # Generated files
 *.g.dart
 *.freezed.dart
+
+# Signing files
+*.jks
+android/key.properties
