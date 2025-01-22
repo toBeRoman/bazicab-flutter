@@ -18,4 +18,26 @@ class Trip {
     required this.date,
     required this.fare,
   });
+
+  Map<String, dynamic> toJson() => {
+        'startLocation': startLocation,
+        'destination': destination,
+        'startLat': startLat,
+        'startLng': startLng,
+        'endLat': endLat,
+        'endLng': endLng,
+        'date': date.toIso8601String(),
+        'fare': fare,
+      };
+
+  factory Trip.fromJson(Map<String, dynamic> json) => Trip(
+        startLocation: json['startLocation'],
+        destination: json['destination'],
+        startLat: json['startLat'],
+        startLng: json['startLng'],
+        endLat: json['endLat'],
+        endLng: json['endLng'],
+        date: DateTime.parse(json['date']),
+        fare: json['fare'],
+      );
 } 
